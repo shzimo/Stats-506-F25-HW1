@@ -1,0 +1,337 @@
+---
+title: "506 Problem Set 1"
+format: pdf
+author: Zimo Shu
+editor: visual
+---
+
+## Problem 1 - Abalone Data
+
+a.  Import the data into a data.frame in R. Use the information in the “abalone.names” file to give appropriate column names.
+
+```{r}
+# Confirm the files' path in my directory
+getwd() 
+dir("abalonedata")
+```
+
+```{r}
+# Import the data into a data.frame
+df_data <- read.table("~/stats506coursework/abalonedata/abalone.data", sep = ",", header = FALSE)
+```
+
+```{r}
+# Take a look at the data
+head(df_data)
+head(readLines("abalonedata/abalone.names"), 10) # Source: googled how to properly use readLines in terms of plain text data
+```
+
+According to abalone.names, the eight attributes are **Sex, Length, Diameter, Height, Whole weight, Shucked weight, Viscera weight, Shell weight and Rings.**
+
+```{r}
+# Use the information in the “abalone.names” file to give appropriate column names
+colnames(df_data) <- c("Sex","Length","Diameter","Height",
+                       "WholeWeight","ShuckedWeight",
+                       "VisceraWeight","ShellWeight","Rings")
+head(df_data)
+```
+
+b.  The data contains information on three different sexes of abalone. Report the number of observations belonging to each sex.
+
+```{r}
+# Report the number of observations belonging to each sex
+sex_num <- table(df_data$Sex)
+sex_num
+```
+
+Hence, there are 1307 Female observations, 1342 Infant observations, and 1528 Male observations.
+
+c. Use the data to answer the following questions:
+
+1. Which weight has the highest correlation with rings?
+
+```{r}
+weights <- df_data[, c("WholeWeight", "ShuckedWeight", "VisceraWeight", "ShellWeight")]
+# The correlation with rings for different sorts of weight
+cor_weightrings <- cor(weights, df_data$Rings)
+cor_weightrings 
+```
+
+Hence, ShellWeight has the highest correlation (0.6275740) with rings.
+
+2. For that weight, which sex has the highest correlation?
+
+```{r}
+# Subset data by sex
+df_f <- subset(df_data, Sex == "F")
+df_m <- subset(df_data, Sex == "M")
+df_i <- subset(df_data, Sex == "I")
+
+# For ShellWeight, correlations with Rings by sex
+cor(df_f$ShellWeight, df_f$Rings)
+cor(df_m$ShellWeight, df_m$Rings)
+cor(df_i$ShellWeight, df_i$Rings)
+```
+
+So for ShellWeight, the sex I (infants) has the highest correlation.
+
+3. What are the weights of the abalone with the most rings?
+
+```{r}
+# Find the most rings
+max_ring <- max(df_data$Rings)
+most_rings <- subset(df_data, Rings == max_ring)
+# Find the weights of the abalone with the most rings
+most_rings[, c("WholeWeight","ShuckedWeight","VisceraWeight","ShellWeight")]
+```
+
+The weights of the abalone with the most rings are shown as above.
+
+WholeWeight: 1.8075 
+
+ShuckedWeight: 0.7055
+
+VisceraWeight: 0.3215	
+
+ShellWeight: 0.475
+
+
+4. What percentage of abalones have a viscera weight larger than their shell weight?
+
+```{r}
+# Viscera weight larger than their shell weight： df_data$VisceraWeight > df_data$ShellWeight
+mean(df_data$VisceraWeight > df_data$ShellWeight) * 100
+```
+
+Therefore, about 6.512% of abalones have a viscera weight larger than their shell weight.
+
+d. Create a table of correlations between weights and rings, within each sex. The columns should be the four weights, and the rows should be the sexes. (This table does not need to be “fancy” but should clearly identify what each value represents.)
+
+```{r}
+# Get three correlations between weights and rings for sex
+# F
+cor_f <- cor(subset(df_data, Sex == "F")$Rings, subset(df_data, Sex == "F")[, c("WholeWeight","ShuckedWeight", "VisceraWeight","ShellWeight")])
+# M
+cor_m <- cor(subset(df_data, Sex == "M")$Rings, subset(df_data, Sex == "M")[, c("WholeWeight","ShuckedWeight", "VisceraWeight","ShellWeight")])
+
+# I
+cor_i <- cor(subset(df_data, Sex == "I")$Rings, subset(df_data, Sex == "I")[, c("WholeWeight","ShuckedWeight", "VisceraWeight","ShellWeight")])
+
+# Combine the correlations into one table
+correlation_table <- rbind(Female = cor_f, Male = cor_m, Infant = cor_i)
+rownames(correlation_table) <- c("Female", "Male", "Infant")
+correlation_table
+
+```
+The correlation table is as above.
+
+e. Carry out a series of t-tests to examine whether the number of rings differs across the three sexes. Present the R output and interpret the results. 
+
+```{R}
+# Subset rings from the data frame in terms of different sexes
+ring_F <- subset(df_data, Sex == "F")$Rings
+ring_M <- subset(df_data, Sex == "M")$Rings
+ring_I <- subset(df_data, Sex == "I")$Rings
+```
+
+```{r}
+# t tests between Female and Male
+test_FM <- t.test(ring_F, ring_M)  
+test_FM
+```
+```{r}
+# t tests between Female and Infants
+test_FI <- t.test(ring_F, ring_I) 
+test_FI
+```
+
+```{r}
+# t tests between Male and Infants
+test_MI <- t.test(ring_M, ring_I) 
+test_MI
+```
+According to the outputs, the p-values from three t-test results are all pretty small (less than 0.05 and 0.001), which implies that there is sufficient evidence for us to reject the null hypothesis of equal mean rings for each pair of sexes. Specifically, we could see that females have slightly more rings than males, and females and males have more rings than infants.
+
+
+## Problem 2 - Food Expenditure Data
+
+a. Import the data into a data.frame in R. 
+
+```{r}
+df_food <- read.csv("~/Downloads/food_expenditure.csv")
+head(df_food)
+```
+
+
+b. Clean up the variable names. Simplify them.
+
+```{r}
+names(df_food)
+```
+
+I would use ID, Age, Size, State, Currency, Total_exp, Grocery_exp, Dine_exp, Misc, Dine_freq, Alcohol and Assistance for variable names.
+
+```{r}
+names(df_food) <-c("ID","Age","Size","State","Currency","Total_exp","Grocery_exp","Dine_exp","Misc","Dine_freq","Alcohol","Assistance")
+
+# Check the table
+df_food
+```
+
+
+c. Restrict the data to those paying in US dollars (USD). Show that it worked by confirming the number of observations before and after restricting the data.
+
+```{r}
+# The number of obervations before
+obs <- nrow(df_food)
+obs
+
+# Restrict the data 
+df_food <- subset(df_food, Currency == "USD")
+
+# The number of obervations after
+obs_after <- nrow(df_food)
+obs_after
+```
+
+It worked, since the observations becomes 230 from 262.
+
+There are a number of issues with this data, likely due to the self-reported nature. For each of the following variables, clean them by removing any row with inappropriate data. For each variable, explain your rules for eliminating rows. For example, for the age variable, you might state “Excluded all minors under the age of 18”. (Note that there is no “right” answer here, the goal is to i) choose reasonable rules and ii) carry out the corresponding code.)
+
+**I will also drop all na values.**
+
+d. The variable related to age.
+
+**My rule: Excluded all minors under the age of 18 and all seniors above the age of 100.**
+
+```{R}
+df_food <- subset(df_food, !is.na(Age) & Age >= 18 & Age <= 100)
+```
+
+e. The variable related to state.
+
+**My rule: Excluded all that are not US states.**
+
+```{R}
+states <- c(
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+  "VA","WA","WV","WI","WY"
+)
+df_food <- subset(df_food, !is.na(State) & State %in% states)
+```
+
+f. The four variables related to food expenditures.
+
+**My rule: Excluded all that are negative or zero.**
+
+```{R}
+df_food <- subset(df_food,
+              !is.na(Total_exp)   & Total_exp   > 0 &
+              !is.na(Grocery_exp) & Grocery_exp > 0 &
+              !is.na(Dine_exp)    & Dine_exp    > 0 &
+              !is.na(Misc)        & Misc        > 0)
+```
+
+g. The variable related to number of times dining out.
+
+**My rule: Excluded all that are more than 7.**
+
+```{R}
+df_food <- subset(df_food, !is.na(Dine_freq) & Dine_freq <= 7)
+```
+
+h. Report your final number of observations after this cleaning.
+
+```{R}
+nrow(df_food)
+```
+
+My final number of observations after this cleaning is 66.
+
+## Problem 3 - Collatz conjecture
+
+a. Write function nextCollatz that given a positive integer, computes the next number in its Collatz sequence. Be sure to provide a reasonable error on an invalid input. Be sure to document your function (see instructions above).
+
+Input: A positive integer
+Output: A positive integer
+
+```{R}
+#' Function to compute the next number in the Collatz sequence
+#'
+#' @param x a positive integer
+#'
+#' @return The next number in its Collatz sequence for `x`
+nextCollatz <- function(x) {
+  if (x %% 2 == 0) { # x is even
+    return(x/2)
+  }
+  if (x %% 2 != 0) { # x is odd
+    return(3*x + 1)
+  }
+  if (is.na(x) || !is.numeric(x) || x <= 0) {
+    stop("The input must be a positive integer.")
+  }
+}
+```
+
+```{r}
+# Reproducing the examples
+nextCollatz(5)
+nextCollatz(16)
+```
+
+b. Create a function collatzSequence that returns the Collatz sequence for a given input. Use your nextCollatz function to perform the calculation. Be sure to provide a reasonable error on an invalid input. Be sure to document your function (see instructions above).
+
+Input: A positive integer
+Output: A list containing the vector of the entries in the Collatz sequence, beginning at the input and ending at 1; and the length of the Collatz sequence.
+
+```{R}
+#' Function that returns the Collatz sequence
+#'
+#' @param y a positive integer
+#'
+#' @return A list containing the vector of the entries in the Collatz sequence
+collatzSequence <- function(y) {
+  if (is.na(y) || !is.numeric(y) || y <= 0) {
+    stop("The input must be a positive integer.")
+  }
+  collatz_seq <- y
+  while (y != 1) {
+    y <- nextCollatz(y)     
+    collatz_seq <- c(collatz_seq, y) # Source: Here I first got an error by mistakenly using "seq" as a variable name. Then I turned to google and our lecture notes, figuring out that I should avoid using names like this since it can be already in R.
+  }
+  return(collatz_seq)
+}
+```
+
+```{r}
+# Reproducing the examples
+collatzSequence(5)
+collatzSequence(19)
+```
+
+
+c. Use these functions to find the shortest and longest Collatz sequence starting with values between 100 and 500, inclusive. In the case of ties, report the lowest starting value.
+
+```{R}
+# Starting with values between 100 and 500
+starting_value <- 100:500
+# The length list
+lens <- numeric(0)
+for (i in starting_value) {
+  lens <- c(lens, length(collatzSequence(i)))
+}
+
+max(lens)
+min(lens)
+
+starting_value[which.max(lens)]
+starting_value[which.min(lens)]
+```
+ 
+Therefore, I got the longest sequence length is 144 (starting value is 327) and the shortest is 8 (starting value is 128).
+ 
+ 
+ 
