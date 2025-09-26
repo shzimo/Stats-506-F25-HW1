@@ -1,0 +1,334 @@
+---
+title: "Problem Set 2"
+format: pdf
+author: Zimo Shu
+editor: visual
+---
+
+## Problem 1 - Modified Random walk
+
+a.  Implement the random walk in three versions.
+
+Based on the rule, a single walk can only be: +1, -1, +10, -3.
+
+Probabilities: 
+
+$P(+1) = 0.5\cdot 0.95 = 0.475$, $P(-1) = 0.5 \cdot 0.8 = 0.40$, $P(+10) = 0.5 \cdot 0.05 = 0.025$, $P(-3) = 0.5 \cdot 0.2 = 0.10$.
+
+(At first I was so not sure about the definition here so I reflected on the problem again. "If the +10 is chosen, it’s not +1 then +10, it is just +1." --> If +1 is chosen, it could either be +1 or +10. )
+
+```{r}
+steps <- c(10, 1, -1, -3)
+probabilities <- c(0.025, 0.475, 0.40, 0.10)
+```
+
+
+**Version 1: using a loop.**
+
+```{r}
+random_walk1 <- function(n) {
+  start_pos <- 0 # start position at 0
+  for (i in 1:n) {
+    start_pos <- start_pos + sample(steps, 1, prob = probabilities, replace = TRUE)
+  }
+  start_pos
+}
+```
+
+
+**Version 2: using built-in R vectorized functions. (Using no loops.) (Hint: Does the order of steps matter?)**
+
+```{r}
+random_walk2 <- function(n) {
+  sum(sample(steps, n, replace = TRUE, prob = probabilities))
+}
+```
+
+
+**Version 3: Implement the random walk using one of the “apply” functions.**
+
+```{r}
+random_walk3 <- function(n) {
+  sum(vapply(seq_len(n), function(i) sample(steps, 1, prob = probabilities, replace = TRUE), numeric(1)))
+}
+```
+
+```{r}
+# Demonstrate that all versions work by running the following
+
+random_walk1(10)
+random_walk2(10)
+random_walk3(10)
+random_walk1(1000)
+random_walk2(1000)
+random_walk3(1000)
+```
+
+b. Demonstrate that the three versions can give the same result. Show this for both n=10 and n=1000. (You will need to add a way to control the randomization.)
+
+```{r}
+# set the same seed to control
+# for n = 10
+set.seed(506)  
+random_walk1(10)
+set.seed(506) 
+random_walk2(10)
+set.seed(506)  
+random_walk3(10)
+```
+
+
+```{r}
+# for n = 10000
+set.seed(321)  
+random_walk1(10000)
+set.seed(321) 
+random_walk2(10000)
+set.seed(321)  
+random_walk3(10000)
+```
+
+
+c. Use the microbenchmark package to clearly demonstrate the speed of the implementations. Compare performance with a low input (1,000) and a large input (100,000). Discuss the results.
+
+```{r}
+library(microbenchmark)
+```
+
+```{r}
+perform_func <- function(n, times = 50) {
+  microbenchmark(
+    loop  = random_walk1(n),
+    apply = random_walk3(n),
+    vect  = random_walk2(n),
+    times = times
+  )
+}
+
+bench_low <- perform_func(1000, 100)  # low input
+bench_large <- perform_func(100000, 100)  # large input
+bench_low
+bench_large
+
+```
+
+Based on the outputs, in both low and large input cases, we could see that vectorized function (version 2) typically has the least running time, and fastest speed. Apply is the slowest. Loop is slightly faster than apply at these sizes.
+
+We could also see the mean and median time of large inputs are way smaller than the mean and median time of low inputs, which is true for all three versions.
+
+
+
+d. What is the probability that the random walk ends at 0 if the number of steps is 10? 100? 1000? Defend your answers with evidence based upon a Monte Carlo simulation.
+
+
+```{r}
+end_zero <- function(n, R = 1e6, seed = 123) {
+  set.seed(seed)
+  # Multinomial(n, p)
+  X <- rmultinom(R, size = n, prob = probabilities)
+  # final positions
+  Final <- drop(steps %*% X)    
+  phat <- mean(Final == 0)     # Monte Carlo estimate
+  se   <- sqrt(phat * (1 - phat) / R)
+  ci   <- phat + qnorm(c(.025, .975)) * se
+  list(p = phat, se = se, ci = ci)
+}
+
+res10 <- end_zero(10, R = 1e6, seed = 1)
+res100 <- end_zero(100, R = 1e6, seed = 1)
+res1000 <- end_zero(1000, R = 1e6, seed = 1)
+
+res10
+res100
+res1000
+```
+
+We could tell that the probability of ending at 0 decreases with n. When n = 10, the probability is approximately 0.132. When n = 100, the probability is approximately 0.0197. When n = 10, the probability is approximately 0.0058. 
+
+## Problem 2 - Mean of Mixture of Distributions
+
+The number of cars passing an intersection is a classic example of a Poisson distribution. At a particular intersection, Poisson is an appropriate distribution most of the time, but during rush hours (hours of 8am and 5pm) the distribution is really normally distributed with a much higher mean.
+
+Using a Monte Carlo simulation, estimate the average number of cars that pass an intersection per day under the following assumptions:
+
+From midnight until 7 AM, the distribution of cars per hour is Poisson with mean 1.
+From 9am to 4pm, the distribution of cars per hour is Poisson with mean 8.
+From 6pm to 11pm, the distribution of cars per hour is Poisson with mean 12.
+During rush hours (8am and 5pm), the distribution of cars per hour is Normal with mean 60 and variance 12
+Accomplish this without using any loops.
+
+```{r}
+hour <- 0:23                     
+rush_hours <- c(8, 17)                # 8am and 5pm
+normal_hours <- numeric(24)
+normal_hours[hour %in% 0:7]   <- 1          # midnight until 7am
+normal_hours[hour %in% 9:16]  <- 8          # 9am to 4pm
+normal_hours[hour %in% 18:23] <- 12         # 6pm to 11pm
+
+# Monte Carlo 
+avg_cars <- function(R = 2e5, seed = 1) {
+  set.seed(seed)
+  pois_hours <- setdiff(hour, rush_hours)
+  # Poisson 
+  X_pois <- matrix(rpois(length(pois_hours) * R, normal_hours[pois_hours + 1]), nrow = length(pois_hours))
+  # Rush hours 
+  X_norm <- matrix(rnorm(2 * R, mean = 60, sd = sqrt(12)), nrow = 2)
+
+  # Daily totals
+  daily_totals <- colSums(X_pois) + colSums(X_norm)
+  # Monte Carlo estimate
+  estimation <- mean(daily_totals)
+  se  <- sd(daily_totals) / sqrt(R)            
+  ci  <- estimation + qnorm(c(.025, .975)) * se
+  list(estimate = estimation, se = se, ci95 = ci)
+}
+# I got an error in using colsums: colSums(pmax(0, round(rbind(X_pois, X_norm)))) : 'x' must be an array of at least two dimensions at the very first. --> I googled, searched help section in R, and figured out to do it separately
+avg_cars()
+```
+Hence, the average number of cars is approximately 264 (263.99).
+
+## Problem 3 - Linear Regression
+
+```{r}
+youtube <- read.csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-02/youtube.csv')
+```
+
+a.
+
+```{R}
+# Take a look at the table at first
+head(youtube)
+```
+```{r}
+# Remove any column that might uniquely identify a commercial
+drop_cols <- c(
+  "brand",
+  "superbowl_ads_dot_com_url", "youtube_url", "thumbnail",  
+  "channel_title",                                           
+  "published_at",                                          
+  "id", "kind", "etag",                                     
+  "title", "description"                                  
+)
+
+youtube_cleaned <- youtube[ , !(names(youtube) %in% drop_cols)]
+
+# report dimensions
+dim(youtube_cleaned)
+
+
+```
+
+The dimensional now is as above.
+
+b. 
+
+```{r}
+vars <- c("view_count","like_count","dislike_count","favorite_count","comment_count")
+# Examine the distribution
+summ <- sapply(youtube[vars], \(x) c(
+  n      = sum(!is.na(x)),
+  min    = min(x, na.rm=TRUE),
+  q25    = unname(quantile(x, .25, na.rm=TRUE)),
+  median = median(x, na.rm=TRUE),
+  mean   = mean(x, na.rm=TRUE),
+  q75    = unname(quantile(x, .75, na.rm=TRUE)),
+  max    = max(x, na.rm=TRUE),
+  sd     = sd(x, na.rm=TRUE),
+  p_zeros= mean(x == 0, na.rm=TRUE)
+))
+round(t(summ), 3)
+```
+From the outputs, we could see:
+
+view_count: (ii) right-skewed, should be transformed
+
+like_count: right‐skewed, outliers, should be transformed
+
+dislike_count: skewed, outliers, should be transformed
+
+favorite_count: sd is zero (variance is zero), **not appropriate**
+
+comment_count: right‐skewed, should be transformed.
+
+```{r}
+# Transformation
+youtube$view_count_log     <- log1p(youtube$view_count)
+youtube$like_count_log     <- log1p(youtube$like_count)
+youtube$dislike_count_log  <- log1p(youtube$dislike_count)
+youtube$comment_count_log  <- log1p(youtube$comment_count)
+```
+
+
+
+c. For each variable in part b. that are appropriate, fit a linear regression model predicting them based upon each of the seven binary flags for characteristics of the ads, such as whether it is funny. Control for year as a continuous covariate.
+
+Discuss the results. Identify the direction of any statistically significant results.
+
+```{r}
+# Seven binary flags
+flags <- c("funny","show_product_quickly","patriotic",
+                "celebrity","danger","animals","use_sex")
+flags <- flags[flags %in% names(youtube)]
+```
+
+
+```{r}
+# Fit models and print outputs
+fit_models <- function(y) {
+  formulas <- as.formula(paste(y, "~ year +", paste(flags, collapse = " + ")))
+  dat <- youtube[, c(y, "year", flags)]
+  dat <- dat[complete.cases(dat), ]
+  mod <- lm(formulas, data = dat)
+  cat("\n============================\n")
+  cat("Outcome:", y, "\n")
+  cat("============================\n")
+  print(summary(mod)$coefficients)  
+  invisible(mod)
+}
+
+mods <- lapply(c("view_count_log","like_count_log","dislike_count_log","comment_count_log"), fit_models)
+```
+
+
+From the outputs, we could see that for view_count_log, all p > 0.13, so no predictors are significant. For like_count_log, year is positive and significant. All flags are not significant. For dislike_count_log, year is positive and significant. Flag patriotic is very close to 0.05, and the direction is positive. All others are not significant. For comment_count_log, no predictors are really significant. Flag year is very close to 0.05 though.
+
+Hence, after log-transforming, there is no sufficient evidence that shows that the seven flags (funny, show product quickly, patriotic, celebrity, danger, animals, use sex) are statistically associated with views, likes, dislikes, or comments at the 0.05 level. (We could see for like_count_log and dislike_count_log, the variable year is positive and significant, which indicates that year is significantly positive for likes and dislikes.)
+
+
+d. Consider only the outcome of view counts. Calculate $\hat\beta$ manually (without using lm) by first creating a proper design matrix, then using matrix algebra to estimate $\beta$. Confirm that you get the same result as lm did in part c.
+
+```{R}
+fml_viewcount <- as.formula(
+  paste("view_count_log ~ year +", paste(flags, collapse = " + "))
+)
+
+vars_new <- c("view_count_log","year", flags)
+dat <- youtube[complete.cases(youtube[, vars_new]), vars_new]
+
+# design matrix X and response y 
+X <- model.matrix(fml_viewcount, data = dat)   
+y <- dat$view_count_log
+
+# Use normal equations
+XtX <- t(X) %*% X
+Xty <- t(X) %*% y
+beta_hat <- solve(XtX, Xty)             
+
+# Use lm to get the value
+fit <- lm(fml_viewcount, data = dat)
+coef_lm <- coefficients(fit)
+
+print(beta_hat)          
+print(coef_lm)          
+
+all.equal(as.vector(beta_hat), as.vector(coef_lm))
+
+```
+
+
+Hence, I got the same result as lm did. The calculated result would be:
+
+$\hat\beta \approx (-31.55, 0.02, 0.56, 0.21, 0.51, 0.04, 0.63, -0.31, -0.38).$
+
+
+
