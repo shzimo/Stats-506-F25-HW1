@@ -334,4 +334,6 @@ starting_value[which.min(lens)]
 Therefore, I got the longest sequence length is 144 (starting value is 327) and the shortest is 8 (starting value is 128).
  
  
+
+
  

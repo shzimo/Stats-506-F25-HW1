@@ -6,3 +6,4 @@ Stats 506 covers a variety of topics related to the use of computers for analyzi
 gain fluency with common computing tools, methods, and concepts used by data scientists and statistical analysts;
 develop good habits for coding, documentation, and workflow;
 demonstrate growth in presenting and communicating data and analysis.
+This is stats 506 coursework for FA2025.
