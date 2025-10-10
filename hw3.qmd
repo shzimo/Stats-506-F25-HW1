@@ -63,7 +63,8 @@ merged_df$DMDHHSZA <- as.numeric(merged_df$DMDHHSZA)
 merged_df$INDHHIN2[merged_df$INDHHIN2 %in% c(77, 99)] <- NA
 # Issue: 12 = “$20,000 and Over” and 13 = “Under $20,000” are strange orderings
 # To fix, I will treat 12 and 13 as NA and reorder
-x[x %in% c(12, 13)] <- NA
+merged_df$INDHHIN2[merged_df$INDHHIN2 %in% c(12, 13)] <- NA
+income_raw <- merged_df$INDHHIN2
 income_levels  <- c(1,2,3,4,5,6,7,8,9,10,14,15)
 income_labels  <- c("$0–4,999",
                     "$5,000–9,999",
@@ -77,7 +78,7 @@ income_labels  <- c("$0–4,999",
                     "$65,000–74,999",
                     "$75,000–99,999",
                     "$100,000 and over")
-merged_df$INDHHIN2_clean <- factor(x, levels = income_levels, labels = income_labels, ordered = TRUE)
+merged_df$INDHHIN2_clean <- factor(income_raw, levels = income_levels, labels = income_labels, ordered = TRUE)
 ```
 
 ```{r}
@@ -515,7 +516,7 @@ barplot(rbind(observe_prop, benford),
         xlab = "Leading digit")
 
 
-cbind(Observed = obs_prop, Benford = benford)
+cbind(Observed = observe_prop, Benford = benford)
 ```
 
 
