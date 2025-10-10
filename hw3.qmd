@@ -1,0 +1,524 @@
+---
+title: "Problem Set 3"
+format: pdf
+editor: visual
+author: Zimo Shu
+---
+## Problem 1
+
+a. Merge the two files to create a single data.frame. Keep only records which matched. Print out the dimensions of the merged data.frame.
+
+```{r}
+library(haven)  # read_xpt()
+# Citation: from R studio Help:
+# Description: The SAS transport format is a open format, as is required for submission of the data to the FDA.
+# Usage: read_xpt(file, col_select = NULL, skip = 0, n_max = Inf, .name_repair = "unique")
+
+library(knitr) 
+```
+
+```{R}
+aux_i <- read_xpt("AUX_I.XPT")   
+demo_i <- read_xpt("DEMO_I.XPT")  
+head(aux_i)
+head(demo_i)
+```
+
+We could see the common column is SEQN.
+
+```{r}
+merged_df <- merge(demo_i, aux_i, by = "SEQN", all = FALSE)
+cat("Dimensions:\n")
+print(dim(merged_df))
+```
+
+b. Clean up data.
+
+```{r}
+# First check if there are any weird values 
+table(merged_df$RIAGENDR, useNA = "ifany")
+table(merged_df$DMDCITZN, useNA = "ifany")
+table(merged_df$DMDHHSZA, useNA = "ifany")
+table(merged_df$INDHHIN2, useNA = "ifany")
+```
+
+
+```{r}
+# Start cleaning data
+# 1. Gender 
+merged_df$RIAGENDR <- factor(merged_df$RIAGENDR, levels = c(1, 2), labels = c("Male", "Female"))
+
+
+# 2. Citizenship 
+# 7/9 -> NA
+merged_df$DMDCITZN[merged_df$DMDCITZN %in% c(7, 9)] <- NA
+
+merged_df$DMDCITZN <- factor(merged_df$DMDCITZN, levels = c(1, 2), labels = c("Citizen", "Not citizen"))
+
+# 3. Number of children 5 years or younger in the household
+merged_df$DMDHHSZA <- as.numeric(merged_df$DMDHHSZA)
+
+# 4. Annual household income 
+# Replace 77 and 99 with NA
+merged_df$INDHHIN2[merged_df$INDHHIN2 %in% c(77, 99)] <- NA
+# Issue: 12 = “$20,000 and Over” and 13 = “Under $20,000” are strange orderings
+# To fix, I will treat 12 and 13 as NA and reorder
+x[x %in% c(12, 13)] <- NA
+income_levels  <- c(1,2,3,4,5,6,7,8,9,10,14,15)
+income_labels  <- c("$0–4,999",
+                    "$5,000–9,999",
+                    "$10,000–14,999",
+                    "$15,000–19,999",
+                    "$20,000–24,999",
+                    "$25,000–34,999",
+                    "$35,000–44,999",
+                    "$45,000–54,999",
+                    "$55,000–64,999",
+                    "$65,000–74,999",
+                    "$75,000–99,999",
+                    "$100,000 and over")
+merged_df$INDHHIN2_clean <- factor(x, levels = income_levels, labels = income_labels, ordered = TRUE)
+```
+
+```{r}
+# Check the cleaned data
+cat("Gender:\n")
+print(table(merged_df$RIAGENDR, useNA="ifany"))
+cat("\nCitizenship:\n")
+print(table(merged_df$DMDCITZN, useNA="ifany"))
+cat("\nNumber of children 5 years or younger in the household:\n")
+print(table(merged_df$DMDHHSZA))
+cat("\nAnnual household income:\n")
+print(table(merged_df$INDHHIN2_clean, useNA="ifany"))
+
+```
+
+c. 
+```{r}
+# Fit Poisson regression models 
+
+# Right ear: gender
+m1R <- glm(AUXTWIDR ~ RIAGENDR, data = merged_df,
+           family = poisson(link = "log"))
+
+# Right ear: gender + citizenship + children + income
+m2R <- glm(AUXTWIDR ~ RIAGENDR + DMDCITZN + 
+             DMDHHSZA + INDHHIN2_clean,
+           data = merged_df, family = poisson(link = "log"))
+
+# Left ear: gender
+m1L <- glm(AUXTWIDL ~ RIAGENDR, data = merged_df,
+           family = poisson(link = "log"))
+
+# Left ear: gender + citizenship + children + income
+m2L <- glm(AUXTWIDL ~ RIAGENDR + DMDCITZN + 
+             DMDHHSZA + INDHHIN2_clean,
+           data = merged_df, family = poisson(link = "log"))
+
+```
+
+
+```{R}
+m1R
+m2R
+m1L
+m2L
+```
+
+Based on the outputs, we created a nice table. 
+(I wrote a summary function to do this at first, but I encountered an unexpected c stack usage limit error, which I failed to solve. So I changed my way using a direct computation of statistics but this could look a little complicated. I would definitely ask about the c stack error during OH or after class next week.)
+
+```{R}
+# AIC
+AIC_1R <- 84680
+AIC_1L <- 98690
+AIC_2R <- 86400
+AIC_2L <- 96620
+
+# n 
+n_1R <- 3704 + 1   # 3705
+n_1L <- 4102 + 1   # 4103
+n_2R <- 3664 + 1   # 3665
+n_2L <- 4148 + 1   # 4149
+
+# pseudo-R^2 = 1 - Residual / Null
+null_1R <- 62370; res_1R <- 61750
+null_1L <- 73310; res_1L <- 73290
+null_2R <- 64150; res_2R <- 63700
+null_2L <- 70970; res_2L <- 70960
+
+pseudo_1R <- 1 - res_1R / null_1R
+pseudo_1L <- 1 - res_1L / null_1L
+pseudo_2R <- 1 - res_2R / null_2R
+pseudo_2L <- 1 - res_2L / null_2L
+
+# Coefficient estimates 
+# Gender 
+b_1R_gender <- 0.009264
+b_1L_gender <- 0.01295
+b_2R_gender <- 0.0151278
+b_2L_gender <- 0.018747
+
+# Citizenship 
+b_2R_cit <- 0.0412489
+b_2L_cit <- 0.01858
+
+# Children 
+b_2R_kids <- -0.0040778
+b_2L_kids <- -0.017432
+
+irr_1R_gender <- exp(b_1R_gender)
+irr_1L_gender <- exp(b_1L_gender)
+irr_2R_gender <- exp(b_2R_gender)
+irr_2L_gender <- exp(b_2L_gender)
+
+irr_2R_cit    <- exp(b_2R_cit)
+irr_2L_cit    <- exp(b_2L_cit)
+
+irr_2R_kids   <- exp(b_2R_kids)
+irr_2L_kids   <- exp(b_2L_kids)
+
+coef_tab <- data.frame(
+  Model = c("1R","2R","1L","2L"),
+  Ear   = c("Right","Right","Left","Left"),
+  `Gender (F vs M)` = round(c(irr_1R_gender, irr_2R_gender, irr_1L_gender, irr_2L_gender), 3),
+  `Citizenship (Not vs Cit)` = round(c(NA, irr_2R_cit, NA, irr_2L_cit), 3),
+  `Children (per child)` = round(c(NA, irr_2R_kids, NA, irr_2L_kids), 3),
+  check.names = FALSE
+)
+
+# replace NA with em dash
+coef_tab[is.na(coef_tab)] <- "—"
+
+# Model stats table
+stats_tab <- data.frame(
+  Model = c("1R","2R","1L","2L"),
+  Ear   = c("Right","Right","Left","Left"),
+  n     = c(n_1R, n_2R, n_1L, n_2L),
+  `Pseudo-R^2` = round(c(pseudo_1R, pseudo_2R, pseudo_1L, pseudo_2L), 3),
+  AIC   = c(AIC_1R, AIC_2R, AIC_1L, AIC_2L),
+  check.names = FALSE
+)
+
+```
+
+```{R}
+knitr::kable(coef_tab,
+               caption = "IRR",
+               align = c("l","l","r","r","r"))
+knitr::kable(stats_tab,
+               caption = "Model Summary Statistics",
+               align = c("l","l","r","r","r"),
+               digits = 3)
+
+```
+
+
+d. From model 2L, provide evidence whether there is a difference between males and females in terms of their incidence risk ratio. Test whether the predicted value of Tympanometric width measure of the left ear differs between men and women. Include the results of the each test and their interpretation.
+
+
+```{r}
+# Wald test on the gender coefficient
+b  <- coef(m2L)["RIAGENDRFemale"]
+se <- sqrt(vcov(m2L)["RIAGENDRFemale","RIAGENDRFemale"])
+z  <- b / se
+p  <- 2 * (1 - pnorm(abs(z)))
+
+IRR <- exp(b)
+CI  <- exp(b + c(-1, 1) * 1.96 * se)
+
+cat(sprintf("Model 2L Female vs Male:\n"))
+cat(sprintf(" IRR = %.3f, 95%% CI [%.3f, %.3f], z = %.2f, p = %.3g\n\n",
+            IRR, CI[1], CI[2], z, p))
+
+# Test 2: predict 
+# Citation: from Rstudio help: levels provides access to the levels attribute of a variable. A valid value for levels(x). For the default method, NULL or a character vector. For the factor method, a vector of character strings with length at least the number of levels of x, or a named list specifying how to rename the levels.
+
+lev_g   <- levels(merged_df$RIAGENDR)
+lev_cit <- levels(merged_df$DMDCITZN)
+lev_inc <- levels(merged_df$INDHHIN2_clean)
+
+mode_level <- function(x) names(which.max(table(x)))
+
+cit_typ <- mode_level(merged_df$DMDCITZN)
+inc_typ <- mode_level(merged_df$INDHHIN2_clean)
+kids_mu <- mean(merged_df$DMDHHSZA, na.rm = TRUE)
+
+newdata <- data.frame(
+  RIAGENDR  = factor(c("Male","Female"), levels = lev_g),
+  DMDCITZN  = factor(rep(cit_typ, 2),        levels = lev_cit),
+  DMDHHSZA = kids_mu,
+  INDHHIN2_clean = factor(rep(inc_typ, 2),        levels = lev_inc, ordered = TRUE)
+)
+
+# Predicted means
+pred_mu <- predict(m2L, newdata, type = "response")
+
+X <- model.matrix(m2L, newdata)       # design matrix 
+V <- vcov(m2L)                        # covariance
+cvec <- X[2, ] - X[1, ]               
+d_eta <- drop(cvec %*% coef(m2L))     # difference 
+se_d <- sqrt(drop(t(cvec) %*% V %*% cvec))
+z_d <- d_eta / se_d
+p_d <- 2 * (1 - pnorm(abs(z_d)))
+# ratio of predicted means
+IRR_pred <- exp(d_eta)
+
+cat("Predicted means at typical covariates:\n")
+print(data.frame(Gender = c("Male","Female"),
+                 Predicted_LeftEar = round(pred_mu, 2)),
+      row.names = FALSE)
+
+cat(sprintf("\nTest of difference in predicted means (Female - Male):\n"))
+cat(sprintf("z = %.2f, p = %.3g\n", z_d, p_d))
+cat(sprintf("Ratio of predicted means (Female/Male) = %.3f\n", IRR_pred))
+
+```
+**Wald test:**
+
+We could see that from Model 2L, the estimated incidence rate ratio for females relative to males is 1.019. So holding citizenship, number of children, and household income unchanged, the expected tympanometric width in the left ear is approximately 1.9% higher for females than for males. The p-valu is pretty small, which indicates that this difference is statistically significant.
+
+**Predicted-value test: **
+
+83.45 vs 81.90; small p value; females also show a higher expected tympanometric width than males. 
+
+In conclusion, there is a statistically significant but actually modest difference.
+
+
+## Problem 2 - Sakila
+
+```{r}
+library(DBI)
+library(RSQLite)
+
+sakila <- dbConnect(RSQLite::SQLite(), "sakila_master.db")
+dbListTables(sakila)
+```
+
+
+a. For each store, how many customers does that store have, and what percentage of customers of that store are active in the system?
+
+```{r}
+# Get the list of all columns for customer table
+dbListFields(sakila, "customer")
+dbGetQuery(sakila, "SELECT * FROM customer LIMIT 5")
+```
+
+
+```{R}
+# Take a look at the active variable
+dbGetQuery(sakila, "
+SELECT store_id, active
+  FROM customer
+ LIMIT 5
+")
+```
+```{R}
+dbGetQuery(sakila, "
+SELECT
+  store_id,
+  COUNT(*) AS num_customers,
+  ROUND(AVG(active) * 100.0, 2) AS percent_active
+FROM customer
+GROUP BY store_id
+ORDER BY store_id;
+")
+```
+Hence, for store 1, it has 326 customers, and the active customers percentage is 97.55 $\%$. For store 2, it has 273 customers, and the active customers percentage is 97.44 $\%$.
+
+
+b. Generate a table identifying the names and country of each staff member.
+
+```{R}
+# Take a look at staff table first
+dbListFields(sakila, "staff")
+dbGetQuery(sakila, "SELECT staff_id, first_name, last_name, address_id FROM staff")
+
+# The staff table links with address, city and country
+dbListFields(sakila, "address")
+dbGetQuery(sakila, "SELECT address_id, city_id FROM address LIMIT 5")
+
+dbListFields(sakila, "city")
+dbGetQuery(sakila, "SELECT city_id, country_id FROM city LIMIT 5")
+
+dbListFields(sakila, "country")
+dbGetQuery(sakila, "SELECT country_id, country FROM country LIMIT 5")
+
+```
+
+```{R}
+dbGetQuery(sakila, "
+SELECT
+  s.staff_id,
+  s.first_name || ' ' || s.last_name AS staff_name,
+  co.country
+FROM staff   AS s
+JOIN address AS a  ON a.address_id = s.address_id
+JOIN city    AS ci ON ci.city_id = a.city_id
+JOIN country AS co ON co.country_id = ci.country_id
+ORDER BY s.staff_id;
+")
+```
+
+
+c. Identify the name(s) of the film(s) which was/were rented for the highest dollar value. (Assume all costs are in USD regardless of country.) (Hint: You can merge a table more than once.)
+
+```{R}
+# Find the one with highest value here
+dbGetQuery(sakila, "
+WITH values_film AS (
+  SELECT
+      f.film_id,
+      f.title,
+      SUM(p.amount) AS total_val
+  FROM payment   AS p
+  JOIN rental    AS r  ON r.rental_id = p.rental_id
+  JOIN inventory AS i  ON i.inventory_id = r.inventory_id
+  JOIN film      AS f  ON f.film_id = i.film_id
+  GROUP BY f.film_id, f.title
+)
+SELECT film_id, title, ROUND(total_val, 2) AS total_val
+FROM values_film
+WHERE total_val = (SELECT MAX(total_val) FROM values_film) 
+ORDER BY title;
+")
+```
+
+Hence, the film that rented for the highest value is TELEGRAPH VOYAGE (with 231.73 dollar value).
+
+
+## Problem 3
+
+```{r}
+au <- read.csv("au-500.csv", stringsAsFactors = FALSE)
+head(au)
+```
+
+
+a. What percentage of the websites are .com’s (as opposed to .net, .com.au, etc)?
+
+```{r}
+# Based on R studio Help: trimws Remove leading and/or trailing whitespace from character strings. --> in case there are any whitespaces
+website <- tolower(trimws(au$web))
+
+# Remove scheme and www
+website <- sub("^https?://", "", website)
+website <- sub("^www\\.", "", website)
+
+## Keep the host 
+host <- sub("/.*$", "", website)
+
+valid_web <- !is.na(host) & nzchar(host)   
+# Ends with '.com' exactly -> not .com.au
+is_com <- grepl("\\.com$", host)     
+
+percentage <- 100 * sum(is_com[valid_web]) / sum(valid_web)
+cat("Percentage of .com websites:", percentage, "%\n")
+```
+
+Hence the percentage is 0 $\%$ (no ".com" websites in the data).
+
+b. What is the most common domain name amongst the email addresses? 
+
+```{R}
+emails <- au$email
+domains <- sub(".*@", "", emails)          # after '@'
+valid <- !is.na(domains) & nzchar(domains)
+
+table_email <- sort(table(domains[valid]), decreasing = TRUE)
+common_domain <- names(table_email)[1]
+cat("Most common email domain:", common_domain, "\n")
+```
+
+Hence, the most common email domain name is hotmail.com.
+
+
+c. What proportion of company names contain a non-alphabetic character, excluding commas and whitespace. (E.g. “Jane Doe, LLC” would not contain an eligible non-alphabetic character; “Plumber 247” would.) What about if you also exclude ampersands (“&”)?
+
+```{r}
+companies <- au$company_name
+
+# Excluding commas and whitespace
+clean_company <- gsub("[,[:space:]]", "", companies)
+
+nonalpha <- grepl("[^A-Za-z]", clean_company)
+prop_nonalpha <- mean(nonalpha, na.rm = TRUE)
+
+# Excluding ampersands
+clean_company2 <- gsub("&", "", clean_company)
+nonalpha_noamp <- grepl("[^A-Za-z]", clean_company2)
+prop_nonalpha_noamp <- mean(nonalpha_noamp, na.rm = TRUE)
+
+cat("Proportion containing non-alphabetic character (excluding commas & spaces): ", 100*prop_nonalpha, "%\n", sep = "")
+cat("Proportion containing non-alphabetic character (excluding '&' as well): ", 100*prop_nonalpha_noamp, "%\n", sep = "")
+```
+
+Hence, we could see that proportion containing non-alphabetic character (excluding commas & spaces) is about 9%. If we excluded '&' as well, the proportion dropped to only 0.8%.
+
+
+d. Cell phones: 1234-567-890 
+There are two different phones listed for each record. Make all phone numbers written like cell phones. Show it works by printing the first 10 phone numbers of each column.
+
+```{r}
+# Function to format the phone number like cell phone
+cell_phone <- function(x) {
+  x <- gsub("\\D", "", x)  # keep digits
+  sub("^(\\d{4})(\\d{3})(\\d{3})$", "\\1-\\2-\\3", x)
+}
+
+au$phone1_cell <- cell_phone(au$phone1)
+au$phone2_cell <- cell_phone(au$phone2)
+
+head(cbind(cell1 = au$phone1_cell, cell2 = au$phone2_cell), 10)
+```
+
+
+e. Produce a histogram of the log of the apartment numbers for all addresses. (You may assume any number at the end of the an address is an apartment number.)
+
+```{R}
+addr <- au$address
+
+apt_str <- sub(".*?(\\d+)$", "\\1", addr)
+# Convert to numeric
+apt <- as.numeric(apt_str)
+apt <- apt[!is.na(apt) & apt > 0]
+
+hist(log(apt), breaks = 20,
+     main = "Histogram",
+     xlab = "log(apartment number)",
+     col = "blue", border = "black")
+```
+
+
+f. Benford’s law is an observation about the distribution of the leading digit of real numerical data. Examine whether the apartment numbers appear to follow Benford’s law. Do you think the apartment numbers would pass as real data?
+
+```{r}
+# Drop any 0 
+leading_digit <- as.numeric(substr(as.character(apt), 1, 1))
+leading_digit <- leading_digit[leading_digit %in% 1:9]
+
+observe <- table(leading_digit)
+observe_prop <- observe / sum(observe)
+
+# Benford expected probabilities
+# citation: according to wiki page: https://en.wikipedia.org/wiki/Benford%27s_law
+# In sets that obey the law, the number 1 appears as the leading significant digit about 30% of the time, while 9 appears as the leading significant digit less than 5% of the time. 
+# P(d) = log10(d+1) - log10(d)
+
+benford <- log10(1 + 1/(1:9))
+names(benford) <- as.character(1:9)
+
+barplot(rbind(observe_prop, benford),
+        beside = TRUE, col = c("blue", "green"),
+        legend = c("Observed", "Benford"),
+        main = "Observed vs Benford",
+        xlab = "Leading digit")
+
+
+cbind(Observed = obs_prop, Benford = benford)
+```
+
+
+In observed data, we can see that the pattern is pretty different. Hence, based on my obeservation, I don't think the apartment numbers would pass as real data.
+
+
