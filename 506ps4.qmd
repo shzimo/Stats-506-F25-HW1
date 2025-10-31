@@ -1,0 +1,304 @@
+---
+title: "Problem Set #04"
+format: pdf
+author: "Zimo Shu"
+editor: visual
+---
+
+## Problem 1 - Tidyverse: New Zealand
+
+```{r}
+# Install and load the package nzelect
+install.packages("nzelect")
+library(nzelect)
+library(tidyverse)
+```
+```{r}
+# Take a look at the data
+head(nzge)
+```
+
+### a. Generate a table (which can just be a nicely printed tibble) of vote count (regardless of party) per year/type. Make sure to sort it by vote count.
+
+```{r}
+# Vote count per year
+nzge_vote <- nzge %>%
+  group_by(election_year, voting_type) %>%
+  summarise(vote_count = sum(votes, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(vote_count))
+
+nzge_vote
+```
+
+### b. Focus only on the 2014 election. Report the proportion of votes for each party in the Candidate election. Again, produce a nice table and sort it by percent of vote.
+
+```{r}
+# Check if there are any NA values
+nzge %>%
+  summarise(any_na_party = any(is.na(party)))
+```
+No na values to deal with in party.
+
+```{r}
+nzge_2014 <- nzge %>%
+  filter(election_year == 2014, voting_type == "Candidate") %>%
+  group_by(party) %>%
+  summarise(votes = sum(votes, na.rm = TRUE), .groups = "drop") %>%
+  mutate(proportion = votes / sum(votes),
+         percent = round(100 * proportion, 2)) %>%
+  arrange(desc(proportion))
+
+nzge_2014
+```
+
+
+### c. Produce a nice table indicating, for each year, which party won the Candidate vote and which party won the Party vote.
+
+```{r}
+nzge_winner <- nzge %>%
+  group_by(election_year, voting_type, party) %>%
+  summarise(total_votes = sum(votes, na.rm = TRUE), .groups = "drop") %>%
+  group_by(election_year, voting_type) %>%
+  filter(total_votes == max(total_votes)) %>%  # keep the max votes
+  ungroup() %>%
+  pivot_wider(names_from = voting_type, values_from = c(party, total_votes),
+              names_sep = "_") %>% # reshape from long to wide
+  select(election_year,
+         Candidate_winner = party_Candidate,
+         Party_winner = party_Party) %>%
+  arrange(election_year)
+
+nzge_winner
+```
+
+## Problem 2 - Tidyverse: Tennis
+
+```{r}
+# Read the ATP 2019 data
+matches <- read_csv("https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv")
+
+glimpse(matches)
+```
+
+
+### a. How many tournaments took place in 2019?
+
+```{r}
+matches_2019 <- matches %>%
+  filter(tourney_date >= 20190101) %>%
+  distinct(tourney_id, tourney_name) %>% 
+  summarise(n_tournaments = n())
+matches_2019
+```
+
+I keep only true 2019 dates, excluding any matches taking place in 2018.
+
+Based on the output, 125 tournaments took place in 2019.
+
+### b. Did any player win more than one tournament? If so, how many players won more than one tournament, and how many tournaments did the most winning player(s) win?
+
+```{R}
+# Did any player win more than one tournament?
+# The tournament champion is the winner of the Final round
+winners <- matches %>%
+  filter(round == "F") %>%       
+  count(winner_name, sort = TRUE)
+winners %>% filter(n > 1) %>% summarise(players_num = n())
+```
+ 
+Yes, there are 12 players winning more than one tournament.
+ 
+```{r}
+# How many tournaments did the most winning player(s) win?
+winners %>% summarise(most_winning = max(n))
+```
+
+The most winning players win 5 tournaments.
+
+### c. Is there any evidence that winners have more aces than losers? 
+
+```{r}
+# Check mean values
+matches_aces <- matches %>% 
+  summarise(
+    mean_winner_aces = mean(w_ace, na.rm = TRUE),
+    mean_loser_aces  = mean(l_ace, na.rm = TRUE)
+  )
+matches_aces 
+```
+
+Based on the outputs, we could see the mean value of winner aces is around 7.497, and the mean value of loser aces is about 5.793. Speaking from mean values, winners tend to have more aces than losers.
+
+I'll also do HT and compute the t-statistic for ace difference.
+
+```{r}
+ace_diff <- matches %>%
+  transmute(diff = w_ace - l_ace) %>%
+  drop_na()
+
+ace_diff %>%
+  summarise(
+    mean_diff = mean(diff),
+    sd_diff   = sd(diff),
+    n         = n(),
+    se_diff   = sd_diff / sqrt(n),
+    t_stat    = mean_diff / se_diff,
+    df        = n - 1
+  )
+```
+Null hypothesis: The mean difference in aces between winners and losers is 0.
+
+Alternative hypothesis: Winners hit more aces on average.
+
+We could see that:
+
+On average, winners hit 1.7 more aces per match than losers.
+
+We got very large t-statistic, showing strong evidence against the null hypothesis.
+
+Therefore, we can conclude that there is very strong evidence that winners serve more aces than losers on average.
+
+
+### d. Identify the player(s) with the highest win-rate. (Note that this is NOT asking for the highest number of wins.) Restrict to players with at least 5 matches.
+
+```{R}
+win_rates <- matches %>%
+  select(winner_name, loser_name) %>%
+  pivot_longer(everything(), names_to = "result", values_to = "player") %>%
+  mutate(win = if_else(result == "winner_name", 1, 0)) %>%
+  group_by(player) %>%
+  summarise(
+    matches = n(),
+    wins = sum(win),
+    win_rate = wins / matches # win-rate
+  ) %>%
+  # Restrict to players with at least 5 matches
+  filter(matches >= 5) %>%
+  arrange(desc(win_rate))
+
+win_rates
+```
+
+Hence, we could see that player Rafael Nadal has the highest win rate (about 0.869565).
+
+
+## 3. Problem 3 - Visualization
+
+```{r}
+# load data first
+url <- "https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv"
+covid_dt <- read_csv(url, show_col_types = FALSE) %>%
+  mutate(date = ymd(date))
+glimpse(covid_dt)
+```
+
+### a. How many major and minor spikes in cases were there?
+
+```{r}
+cases <- covid_dt %>%
+  group_by(date) %>%
+  summarise(total_cases = sum(cases_avg, na.rm = TRUE), .groups = "drop")
+
+ggplot(cases, aes(x = date, y = total_cases)) +
+  geom_line(color = "blue", linewidth = 0.8) +
+  labs(
+    title = "COVID-19 Cases Over Time (7-day Average)",
+    x = NULL,
+    y = "New Cases (7-day average)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+We could notice from the plot there are basically four major and two minor spikes in U.S. cases, with the largest during winter 2021 and the very beginning of 2022. Another three were during around late 2020 to early 2021, summer 2021, and mid 2022. Between those peaks, smaller minor increases occurred. There was a small bump around spring 2020. There was another minor spike around late 2022 to early 2023.
+
+### b. For the states with the highest and lowest overall rates per population, what differences do you see in their trajectories over time?
+
+```{r}
+# Find highest and lowest rates
+avg_rate <- covid_dt %>%
+  group_by(state) %>%
+  summarise(mean_rate = mean(cases_avg_per_100k, na.rm = TRUE), .groups = "drop")
+
+top_state <- avg_rate %>% slice_max(mean_rate, n = 1) %>% pull(state)
+low_state <- avg_rate %>% slice_min(mean_rate, n = 1) %>% pull(state)
+
+top_state 
+low_state
+```
+
+We got the highest rate state American Samoa and the lowest rate state Maryland.
+
+```{r}
+compare_rate <- covid_dt %>% filter(state %in% c(top_state, low_state))
+
+ggplot(compare_rate, aes(date, cases_avg_per_100k, color = state)) +
+  geom_line(linewidth = 1) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
+  labs(
+    title = "Trajectories: Highest vs. Lowest Rate States",
+    x = NULL, y = "New Cases (7-day avg per 100k)",
+    color = "State"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 37, hjust = 1))
+```
+American Samoa shows one extremely sharp, narrow spike (looks explosive) around mid 2022, reaching a very high case rate with a short duration, followed by smaller jumps later (still look sharp and steep).
+
+Maryland has much broader and smoother curves spread out over time, with several moderate peaks and only gets one relatively large peak around early 2022 (the peak is still pretty minor compared to the peak of American Samoa). The trajectory is much steadier and more robust.
+
+### c. Identify, to the best of your ability without a formal test, the first five states to experience Covid in a substantial way.
+
+I'll particularly explore the early 2020 period (the first three months) to figure out. I chose 1 as the threshold for substantially experiencing covid.
+
+```{r}
+early <- covid_dt %>% filter(date >= as.Date("2020-01-01"), date <= as.Date("2020-03-31"))
+
+# Substantial threshold 
+threshold <- 1
+# First date each state crosses the threshold 
+first_dates <- early %>%
+  group_by(state) %>%
+  summarise(first_date = first(date[cases_avg_per_100k >= threshold], default = as.Date(NA)), .groups = "drop") %>%
+  filter(!is.na(first_date)) %>%
+  arrange(first_date)
+```
+
+We plot the histogram of first dates to find out some early dates when the covid occurred.
+
+```{r}
+ggplot(first_dates, aes(first_date)) +
+  geom_histogram(binwidth = 1, boundary = as.Date("2020-01-01"),
+                 fill = "red", color = "white") +
+  scale_x_date(date_breaks = "2 days", date_labels = "%b %d") +
+  labs(
+    title = "Each U.S. state first show COVID activity",
+    x = "Date states first crossed the threshold",
+    y = "Number of states"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+We could see the number of states is more than 5 after Mar 19th. But there could be overlapped states. We would mainly focus from Mar 15th to Mar 23rd now (for cleaner plot and better readability).
+
+Then we plot for each state, the first date its 7-day avg reached 1 per 100.
+
+```{r}
+date_period <- first_dates %>%
+  filter(first_date >= as.Date("2020-03-15"), 
+         first_date <= as.Date("2020-03-23"))
+
+ggplot(date_period,
+       aes(x = first_date, y = forcats::fct_reorder(state, first_date))) +
+  geom_point(size = 2) + # uses forcats here, referring to info on https://forcats.tidyverse.org/
+  scale_x_date(date_breaks = "1 day", date_labels = "%b %d") +
+  labs(
+    title = "First date each state reached ≥ 1 new case per 100k (7-day avg)",
+    x = "Date", y = "State"
+  ) +
+  theme_minimal(base_size = 9) 
+```
+
+Now we could figure out the first five state according to the plot:
+
+Washington, New York, New Jersey, Louisiana, and Guam.
+
+
