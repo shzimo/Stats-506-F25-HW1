@@ -1,0 +1,606 @@
+---
+title: "506 hw5"
+format: html
+author: "Zimo Shu"
+editor: visual
+---
+
+## Problem 1 - OOP Programming
+
+### a. For the waldCI class, define the following:
+
+```{R}
+# Define the class (slots)
+setClass("waldCI",
+  slots = c(
+    level = "numeric",  # confidence level 
+    mean  = "numeric",  # point estimate
+    sterr = "numeric",  # standard error 
+    lb    = "numeric",  # lower bound
+    ub    = "numeric"   # upper bound
+  )
+)
+```
+
+
+```{r}
+# Validator
+
+setValidity("waldCI", function(object) {
+  errs <- character()
+
+  # level
+  if (length(object@level) != 1L || !is.finite(object@level) ||
+      object@level <= 0 || object@level >= 1) {
+    errs <- c(errs, "'level' must be between 0 and 1.")
+  }
+
+  # scalar checks
+  for (nm in c("mean","sterr","lb","ub")) {
+    val <- slot(object, nm)
+    if (length(val) != 1L || !is.finite(val)) {
+      errs <- c(errs, sprintf("'%s' must be a finite number.", nm))
+    }
+  }
+
+  # standard error nonnegative check
+  if (length(object@sterr) == 1L && object@sterr < 0) {
+    errs <- c(errs, "'sterr' must be >= 0.")
+  }
+
+  # bounds check
+  if (length(object@lb) == 1L && length(object@ub) == 1L && object@lb > object@ub) {
+    errs <- c(errs, "'lb' must be <= 'ub'.")
+  }
+
+  # internal consistency 
+  if (length(object@level) == 1L && length(object@mean) == 1L && length(object@sterr) == 1L) {
+    z  <- qnorm(1 - (1 - object@level)/2)
+    lh <- object@mean - z * object@sterr
+    uh <- object@mean + z * object@sterr
+    tol <- 1e-8 * max(1, abs(object@lb), abs(object@ub), abs(lh), abs(uh))
+    if (abs(object@lb - lh) > tol || abs(object@ub - uh) > tol) {
+      errs <- c(errs, "Inconsistent slots: (mean, sterr, level) do not match (lb, ub) under Wald CI.")
+    }
+  }
+
+  if (length(errs)) errs else TRUE
+})
+```
+
+```{r}
+# Constructor
+waldCI2 <- function(level,
+                    mean  = NULL,
+                    sterr = NULL,
+                    lb = NULL,
+                    ub = NULL) {
+  if (length(level) != 1L || !is.finite(level) || level <= 0 || level >= 1) {
+    stop("'level' must be between 0 and 1.")
+  }
+  have_ms   <- !is.null(mean)  && !is.null(sterr)
+  have_lbub <- !is.null(lb)    && !is.null(ub)
+  if (have_ms == have_lbub) {
+    stop("Please provide either (mean, sterr) or (lb, ub).")
+  }
+
+  z <- qnorm(1 - (1 - level)/2)
+
+  if (have_ms) {
+    if (length(mean)  != 1L || !is.finite(mean))  stop("'mean' must be a finite number.")
+    if (length(sterr) != 1L || !is.finite(sterr) || sterr < 0) stop("'sterr' must be >= 0.")
+    lb_calc <- mean - z*sterr
+    ub_calc <- mean + z*sterr
+    obj <- new("waldCI", level = level, mean = mean, sterr = sterr, lb = lb_calc, ub = ub_calc)
+  } else {
+    if (length(lb) != 1L || !is.finite(lb)) stop("'lb' must be a finite number.")
+    if (length(ub) != 1L || !is.finite(ub)) stop("'ub' must be a finite number.")
+    if (lb > ub) stop("'lb' should be <= 'ub'.")
+    mean_calc  <- (lb + ub)/2
+    sterr_calc <- (ub - lb)/(2*z)
+    obj <- new("waldCI", level = level, mean = mean_calc, sterr = sterr_calc, lb = lb, ub = ub)
+  }
+  validObject(obj)
+  obj
+}
+```
+
+
+```{R}
+# Show method
+setMethod("show", "waldCI",
+  function(object) {
+    cat(sprintf("Wald CI (level = %.4f)\n", object@level))
+    cat(sprintf("mean: %g\n", object@mean))
+    cat(sprintf("sterr: %g\n", object@sterr))
+    cat(sprintf("lb: %g\n", object@lb))
+    cat(sprintf("ub: %g\n", object@ub))
+    return(invisible(object)) # like the lecture notes, return invisible
+  }
+)
+```
+
+```{r}
+# Accessors
+setGeneric("lb", function(object) standardGeneric("lb"))
+setGeneric("ub", function(object) standardGeneric("ub"))
+setGeneric("mean", function(object) standardGeneric("mean"))
+setGeneric("sterr", function(object) standardGeneric("sterr"))
+setGeneric("level", function(object) standardGeneric("level"))
+
+setMethod("lb", "waldCI", function(object) object@lb)
+setMethod("ub", "waldCI", function(object) object@ub)
+setMethod("mean", "waldCI", function(object) object@mean)
+setMethod("sterr", "waldCI", function(object) object@sterr)
+setMethod("level", "waldCI", function(object) object@level)
+```
+
+```{r}
+# Setters
+# lb, ub, mean, sterr, level
+
+setGeneric("lb<-", function(object, value) standardGeneric("lb<-"))
+setGeneric("ub<-", function(object, value) standardGeneric("ub<-"))
+setGeneric("mean<-", function(object, value) standardGeneric("mean<-"))
+setGeneric("sterr<-", function(object, value) standardGeneric("sterr<-"))
+setGeneric("level<-", function(object, value) standardGeneric("level<-"))
+
+setMethod("lb<-", "waldCI",
+  function(object, value) {
+    if (!is.numeric(value) || length(value) != 1L || !is.finite(value)) {
+      stop("'lb' must be a finite number.") # added to make sure no nan error when checking 
+  }
+    if (value > object@ub) {
+      stop("'lb' must be <= 'ub'.")
+  }
+    object@lb <- value
+    z <- qnorm(1 - (1 - object@level)/2)
+    object@mean  <- (object@lb + object@ub)/2
+    object@sterr <- (object@ub - object@lb)/(2*z)
+    validObject(object); object
+  }
+)
+
+setMethod("ub<-", "waldCI",
+  function(object, value) {
+    object@ub <- value
+    z <- qnorm(1 - (1 - object@level)/2)
+    object@mean  <- (object@lb + object@ub)/2
+    object@sterr <- (object@ub - object@lb)/(2*z)
+    validObject(object); object
+  }
+)
+
+setMethod("mean<-", "waldCI",
+  function(object, value) {
+    z <- qnorm(1 - (1 - object@level)/2)
+    object@mean <- value
+    object@lb   <- object@mean - z * object@sterr
+    object@ub   <- object@mean + z * object@sterr
+    validObject(object); object
+  }
+)
+
+setMethod("sterr<-", "waldCI",
+  function(object, value) {
+    z <- qnorm(1 - (1 - object@level)/2)
+    object@sterr <- value
+    object@lb    <- object@mean - z * object@sterr
+    object@ub    <- object@mean + z * object@sterr
+    validObject(object); object
+  }
+)
+
+setMethod("level<-", "waldCI",
+  function(object, value) {
+    if (!is.numeric(value) || length(value) != 1L || !is.finite(value) ||
+    value <= 0 || value >= 1) {
+      stop("'level' must be between 0 and 1.")
+  }
+    object@level <- value
+    z <- qnorm(1 - (1 - object@level)/2)
+    object@lb <- object@mean - z * object@sterr
+    object@ub <- object@mean + z * object@sterr
+    validObject(object); object
+  }
+)
+```
+
+```{r}
+# contains
+# returning a logical of whether a value is within a CI
+
+setGeneric("contains", function(object, value) standardGeneric("contains"))
+
+setMethod("contains", signature(object = "waldCI", value = "numeric"),
+  function(object, value) {
+    value >= object@lb & value <= object@ub
+  }
+)
+```
+
+```{r}
+# overlap 
+# returns a logical of whether the two confidence intervals overlap
+
+setGeneric("overlap", function(x, y) standardGeneric("overlap"))
+
+setMethod("overlap", signature(x = "waldCI", y = "waldCI"),
+  function(x, y) {
+    max(x@lb, y@lb) <= min(x@ub, y@ub)
+  }
+)
+```
+
+
+```{R}
+# as.numeric
+# return c(lb, ub)
+# According to hint: as.numeric is a .Primitive -> no setGeneric needed
+
+setMethod("as.numeric", signature(x = "waldCI"),
+  function(x) c(x@lb, x@ub)
+)
+```
+
+
+```{r}
+# transformCI
+# takes in a function and a waldCI, and returns the transformed waldCI object
+
+setGeneric("transformCI", function(object, f, ...) standardGeneric("transformCI"))
+
+setMethod("transformCI", signature(object = "waldCI", f = "function"),
+  function(object, f, ...) {
+    warning("Only monotonic functions make sense.")
+    a <- f(object@lb); b <- f(object@ub)
+    new_lb <- min(a, b); new_ub <- max(a, b)
+    z <- qnorm(1 - (1 - object@level)/2)
+    new_mean  <- (new_lb + new_ub)/2
+    new_sterr <- (new_ub - new_lb)/(2*z)
+    out <- methods::new("waldCI",
+                        level = object@level,
+                        mean  = new_mean,
+                        sterr = new_sterr,
+                        lb    = new_lb,
+                        ub    = new_ub)
+    validObject(out); out
+  }
+)
+```
+
+
+### b. Use your waldCI class to create three objects.
+
+```{r}
+ci1 <- waldCI2(level = 0.95, lb = 17.2, ub = 24.7)
+ci2 <- waldCI2(level = 0.99, mean = 13, sterr = 2.5)
+ci3 <- waldCI2(level = 0.75, lb = 27.43, ub = 39.22)
+```
+
+```{R}
+ci1
+ci2
+ci3
+```
+
+```{r}
+as.numeric(ci1)
+as.numeric(ci2)
+as.numeric(ci3)
+```
+
+```{r}
+lb(ci2)
+ub(ci2)
+mean(ci1)
+sterr(ci3)
+level(ci2)
+```
+
+
+```{r}
+lb(ci2) <- 10.5
+mean(ci3) <- 34
+level(ci3) <- .8
+
+contains(ci1, 17)
+contains(ci3, 44)
+overlap(ci1, ci2)
+```
+
+```{r}
+eci1 <- transformCI(ci1, sqrt)
+eci1
+mean(transformCI(ci2, log))
+```
+
+
+### c. Show that your validator does not allow the creation of invalid confidence intervals:
+
+```{r}
+ci_valid <- waldCI2(level = 0.95, mean = 10, sterr = 2) # this would be a valid one
+ci_valid
+```
+```{r}
+# Helper func to show errors
+show_error <- function(expr) {
+  tryCatch(
+    { force(expr); cat("no error\n") },
+    error = function(e) { cat(">> ERROR: ", conditionMessage(e), "\n", sep = "") }
+  )
+}
+```
+
+```{r}
+# negative standard error
+cat("Negative standard error:\n")
+show_error({
+  waldCI2(level = 0.95, mean = 5, sterr = -1)
+})
+```
+
+```{r}
+# lb > ub 
+cat("lb > ub error:\n")
+show_error({
+  waldCI2(level = 0.95, lb = 17, ub = 11.8)
+})
+```
+
+
+```{r}
+# Infinite bounds
+cat("Infinite bounds error:\n")
+show_error({
+  waldCI2(level = 0.95, lb = -Inf, ub = Inf)
+})
+```
+
+```{r}
+# Invalid use of setters
+cat("Invalid setters:\n")
+
+# Attempt to set sterr < 0
+cat("sterr(ci_valid) <- -0.7\n")
+cat("Before:", as.numeric(ci_valid), "\n")
+show_error({
+  sterr(ci_valid) <- -0.7
+})
+cat("After :", as.numeric(ci_valid), "\n")  
+
+# Attempt to make lb > ub 
+cat("lb(ci_valid) <- ub(ci_valid) + 1  \n")
+cat("Before:", as.numeric(ci_valid), "\n")
+bad_lb <- ub(ci_valid) + 1
+show_error({
+  lb(ci_valid) <- bad_lb
+})
+cat("After:", as.numeric(ci_valid), "\n")  
+
+# Invalid level 
+cat("level(ci_valid) <- 1.2 \n")
+cat("Before:", level(ci_valid), "\n")
+show_error({
+  level(ci_valid) <- 1.2
+})
+cat("After:", level(ci_valid), "\n") 
+
+# Force non-finite via setters 
+cat("lb(ci_valid) <- Inf \n")
+show_error({
+  lb(ci_valid) <- Inf 
+})
+
+```
+
+## Problem 2 - data.table: **deleted**
+
+## Problem 3 - plotly
+
+```{R}
+library(dplyr)
+library(lubridate)
+library(plotly)
+library(readr)
+
+covid <- read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv")
+
+covid <- covid %>%
+  mutate(Date = ymd(date)) %>%
+  rename(State = state) %>%
+  select(State, Date, cases_avg, cases_avg_per_100k)
+```
+
+### a. How many major and minor spikes in cases were there?
+
+```{r}
+national <- covid |>
+  group_by(Date) |>
+  summarise(cases_avg = sum(cases_avg, na.rm = TRUE), .groups = "drop")
+
+fig_a <- plot_ly(
+  national,
+  x = ~Date, y = ~cases_avg,
+  type = "scatter", mode = "lines",
+  line = list(width = 2)
+) |>
+  layout(
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Daily Cases")
+  )
+fig_a
+```
+We could see 4 major spikes and 3 or 4 minor spikes.
+
+
+### b. For the states with the highest and lowest overall rates per population, what differences do you see in their trajectories over time?
+
+```{r}
+covid_state <- covid |>
+  group_by(State) |>
+  summarise(total = sum(cases_avg_per_100k, na.rm = TRUE), .groups = "drop")
+
+is_extreme <- covid_state$total == max(covid_state$total) | covid_state$total == min(covid_state$total)
+side <- ifelse(covid_state$total > 37500, "right", "left") 
+
+fig_b1 <- plot_ly() |>
+  add_trace(
+    data = covid_state,
+    x = ~total, y = ~State,
+    type = "scatter", mode = "markers",
+    marker = list(size = 8),
+    color = ~is_extreme, colors = c("orange", "blue"),
+    showlegend = FALSE
+  ) |>
+  add_trace(
+    data = covid_state,
+    x = ~total, y = ~State,
+    type = "scatter", mode = "text",
+    text = ~State,
+    textposition = ~ifelse(side == "right", "middle right", "middle left"),
+    textfont = list(size = 11, color = "black"),
+    showlegend = FALSE
+  ) |>
+  layout(
+    xaxis = list(title = "Total COVID cases 01/2020–03/2023"),
+    yaxis = list(title = "", showticklabels = FALSE), 
+    margin = list(l = 20, r = 20, t = 20, b = 60)
+  )
+fig_b1
+```
+
+```{r}
+mr <- covid |> filter(State %in% c("Maine", "Rhode Island"))
+fig_b2 <- plot_ly(
+  mr,
+  x = ~Date, y = ~cases_avg_per_100k,
+  color = ~State,
+  type = "scatter", mode = "lines",
+  line = list(width = 4)  
+) |>
+  layout(
+    yaxis = list(title = "COVID cases per 100k"),
+    legend = list(orientation = "h", x = 0.80, y = 0.95)
+  )
+fig_b2
+```
+
+The spike in winter 21-22 did not seem to affect Maine, while increasing rates severely in Rhode Island.
+
+
+### c. Identify, to the best of your ability without a formal test, the first five states to experience Covid in a substantial way.
+
+```{r}
+covid20 <- covid %>%
+  filter(year(Date) == 2020) %>%
+  select(State, Date, cases_avg_per_100k)
+
+fig_c1 <- plot_ly(
+  covid20,
+  x = ~Date, y = ~cases_avg_per_100k,
+  color = ~State, type = "scatter", mode = "lines",
+  showlegend = FALSE
+) %>%
+  layout(
+    yaxis = list(title = "COVID cases per 100k"),
+    xaxis = list(title = "Date")
+  )
+fig_c1
+
+```
+
+
+
+```{r}
+# Mar–May 2020
+covid20_mm <- covid20 %>%
+  filter(lubridate::month(Date) %in% c(3,4,5))
+
+fig_c2 <- plot_ly(
+  covid20_mm,
+  x = ~Date, y = ~cases_avg_per_100k,
+  color = ~State, type = "scatter", mode = "lines",
+  showlegend = FALSE
+) %>%
+  layout(
+    yaxis = list(title = "COVID cases per 100k"),
+    xaxis = list(title = "Date")
+  )
+fig_c2
+```
+
+```{r}
+# restrict to data where the cases is above 20
+covid20_mm_thr <- covid20_mm %>%
+  filter(cases_avg_per_100k > 20)
+
+fig_c3 <- plot_ly(
+  covid20_mm_thr,
+  x = ~Date, y = ~cases_avg_per_100k,
+  color = ~State, type = "scatter", mode = "lines",
+  showlegend = FALSE
+) %>%
+  layout(
+    yaxis = list(title = "COVID cases per 100k"),
+    xaxis = list(title = "Date")
+  )
+fig_c3
+```
+
+
+```{r}
+topstates <- c("New York","New Jersey","Louisiana",
+               "Guam","Massachusetts","Rhode Island")
+cols <- c(
+  "New York"="red",
+  "New Jersey"="blue",
+  "Louisiana"="green",
+  "Guam"="purple",
+  "Massachusetts"="orange",
+  "Rhode Island"="yellow"
+)
+
+fig <- plot_ly()
+
+for (st in topstates) {
+  dat <- filter(covid20_mm, State == st)
+  fig <- fig %>%
+    add_trace(
+      data = dat,
+      x = ~Date, y = ~cases_avg_per_100k,
+      type = "scatter", mode = "lines",
+      name = st, showlegend = TRUE,
+      line = list(color = cols[st], width = 2.5),
+      hoverinfo = "x+y+name"
+    )
+}
+
+others <- setdiff(sort(unique(covid20_mm$State)), topstates)
+for (st in others) {
+  dat <- filter(covid20_mm, State == st)
+  fig <- fig %>%
+    add_trace(
+      data = dat,
+      x = ~Date, y = ~cases_avg_per_100k,
+      type = "scatter", mode = "lines",
+      name = st, showlegend = FALSE,
+      line = list(color = "lightgrey", width = 1),
+      opacity = 0.35
+    )
+}
+
+fig <- fig %>%
+  layout(
+    xaxis = list(title = "Month of 2020",
+                 range = c(as.Date("2020-03-01"), as.Date("2020-06-01"))),
+    yaxis = list(title = "COVID cases per 100k",
+                 range = c(0, 50), fixedrange = TRUE)
+  )
+
+fig
+```
+
+
+New York, New Jersey, Louisiana, Guam, Massachusetts, Rhode Island.
+
