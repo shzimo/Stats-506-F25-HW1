@@ -1,0 +1,604 @@
+---
+title: "Problem Set #06"
+format: pdf
+editor: visual
+author: "Zimo Shu"
+---
+
+## Problem 1 - Rcpp
+
+```{r}
+library(Rcpp)
+library(e1071)
+
+cppFunction('
+  double C_moment(NumericVector x, int order) {
+    int n = x.size();
+    if (n == 0) return NA_REAL;
+    if (order < 1) return NA_REAL;
+    
+    // mean
+    double mu = 0.0;
+    for (int i = 0; i < n; ++i) {
+      mu += x[i];
+    }
+    mu /= n;
+    
+    // sum of (x_i - mu)^order
+    double val = 0.0;
+    for (int i = 0; i < n; ++i) {
+      double centered = x[i] - mu;
+      double term = 1.0;
+      for (int j = 0; j < order; ++j) {
+        term *= centered;
+      }
+      val += term;
+    }
+    
+    // 1/n scaling 
+    return val / n;
+  }
+')
+
+```
+
+Check:
+
+```{r}
+set.seed(506)
+x <- rnorm(1000)
+
+orders <- c(1L, 2L, 3L, 4L)
+
+# Generate a vector of moderate length 
+# show that you are able to replicate the results of e1071::moment
+
+testing <- lapply(orders, function(k) {
+  list(
+    order = k,
+    cpp = C_moment(x, k),
+    e1071 = moment(x, order = k, center = TRUE),
+    diff = C_moment(x, k) - moment(x, order = k, center = TRUE)
+  )
+})
+
+testing
+```
+
+The results from C_moment and e1071::moment basically agree up. Rcpp implementation replicates e1071::moment.
+
+## Problem 2 - Expanding on waldCI
+
+a. Write a class bootstrapWaldCI that produces a CI using bootstrap, similar to waldCI. It should inherit from waldCI using either the version from the solutions or your version - in either case, include the relevant code in this homework by using source() on a file containing the waldCI code.
+
+```{r}
+library(parallel)
+# waldCI 
+source("waldCI.R")
+
+# bootstrapWaldCI class
+setClass(
+  "bootstrapWaldCI",
+  contains = "waldCI",
+  slots = c(
+    reps = "integer",   # number of bootstrap resamples
+    bootStat = "numeric",   # bootstrap statistics
+    FUN = "function",  # statistic function
+    data = "ANY",      
+    compute = "character" 
+  )
+)
+```
+
+
+```{r}
+#' Bootstrap-based Wald CI
+#'
+#' @param FUN Function which takes a dataset and returns a scalar.
+#' @param data Dataset to bootstrap.
+#' @param reps Number of bootstrap repetitions.
+#' @param level Confidence level.
+#' @param compute Either "serial" or "parallel"
+#'
+#' @return A \code{bootstrapWaldCI} object.
+#' 
+makeBootstrapCI <- function(FUN,
+                            data,
+                            reps  = 100L,
+                            level = 0.95,
+                            compute = c("serial", "parallel")) {
+
+  compute <- match.arg(compute)
+
+  if (!is.function(FUN)) {
+    stop("FUN must be a function that returns a numeric scalar.")
+  }
+
+  # point estimate 
+  est <- FUN(data)
+  if (!is.numeric(est) || length(est) != 1L) {
+    stop("This must return a numeric scalar.")
+  }
+
+  reps <- as.integer(reps)
+  if (reps <= 0L) stop("Thr reps must be positive.")
+
+  # determine n
+  if (is.data.frame(data) || is.matrix(data)) {
+    n <- nrow(data)
+    subset_fun <- function(idx) data[idx, , drop = FALSE]
+  } else {
+    n <- length(data)
+    subset_fun <- function(idx) data[idx]
+  }
+  if (n <= 0L) stop("The data must have positive length.")
+
+  # run bootstrap
+  if (compute == "serial") {
+    bootStat <- numeric(reps)
+    for (b in seq_len(reps)) {
+      idx   <- sample.int(n, n, replace = TRUE)
+      bootd <- subset_fun(idx)
+      bootStat[b] <- FUN(bootd)
+    }
+  } else { 
+    cores <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
+    bootStat <- unlist(
+      parallel::mclapply(
+        seq_len(reps),
+        function(b) {
+          idx   <- sample.int(n, n, replace = TRUE)
+          bootd <- subset_fun(idx)
+          FUN(bootd)
+        },
+        mc.cores = cores
+      ),
+      use.names = FALSE
+    )
+  }
+
+  se_boot <- sd(bootStat)
+
+# rebootstrap 
+setGeneric("rebootstrap", function(object) standardGeneric("rebootstrap"))
+
+#' Re-run the bootstrap for a bootstrapWaldCI object
+#'
+#' @param object A \code{bootstrapWaldCI} object.
+#' @return A new \code{bootstrapWaldCI} object.
+setMethod(
+  "rebootstrap",
+  "bootstrapWaldCI",
+  function(object) {
+    makeBootstrapCI(
+      FUN = object@FUN,
+      data = object@data,
+      reps = object@reps,
+      level = object@level,
+      compute = object@compute
+    )
+  }
+)
+  new(
+    "bootstrapWaldCI",
+    level = level,
+    mean = est,
+    sterr = se_boot,
+    reps = reps,
+    bootStat = bootStat,
+    FUN = FUN,
+    data = data,
+    compute = compute
+  )
+}
+```
+
+
+b. Show your code works by executing the following.
+
+```{r}
+library(ggplot2)
+set.seed(506)
+
+ci1 <- makeBootstrapCI(function(x) mean(x$y),
+                       ggplot2::diamonds,
+                       reps = 1000)
+
+ci1          
+rebootstrap(ci1)
+```
+
+```{r}
+# performance comparison
+set.seed(506)
+t_serial <- system.time(
+  ci_serial <- makeBootstrapCI(
+    function(x) mean(x$y),
+    ggplot2::diamonds,
+    reps    = 5000,
+    level   = 0.95,
+    compute = "serial"
+  )
+)
+
+set.seed(506)
+t_parallel <- system.time(
+  ci_parallel <- makeBootstrapCI(
+    function(x) mean(x$y),
+    ggplot2::diamonds,
+    reps    = 5000,
+    level   = 0.95,
+    compute = "parallel"
+  )
+)
+
+t_serial
+t_parallel
+```
+
+
+Based on the outputs, we could see that the serial version took around 34 seconds total, while the parallel version finished in around 9 seconds using the same number of reps. The parallel option is clearly faster. This actually makes sense because the workload is large enough. For smaller repetitions the improvement might not be this obvious. 
+
+c. Write a function called dispCoef that takes in data (based upon mtcars; it must take in a generic data for the bootstrap) and fits the model: mpg ~     cyl + disp + wt. It should return the coefficient associated with disp. 
+
+```{r}
+dispCoef <- function(dat) {
+  fit <- lm(mpg ~ cyl + disp + wt, data = dat)
+  unname(coef(fit)["disp"])
+}
+
+set.seed(321)
+ci2 <- makeBootstrapCI(dispCoef,
+                       mtcars,
+                       reps = 1000)
+ci2
+rebootstrap(ci2)
+```
+
+```{r}
+# compare 
+set.seed(506)
+t_serial2 <- system.time(
+  ci2_serial <- makeBootstrapCI(
+    dispCoef,
+    mtcars,
+    reps    = 5000,
+    level   = 0.95,
+    compute = "serial"
+  )
+)
+
+set.seed(506)
+t_parallel2 <- system.time(
+  ci2_parallel <- makeBootstrapCI(
+    dispCoef,
+    mtcars,
+    reps    = 5000,
+    level   = 0.95,
+    compute = "parallel"
+  )
+)
+
+t_serial2
+t_parallel2
+```
+
+This time we could see that the serial run took about 4.4 seconds, while the parallel one finished in 1.3 seconds. The parallel method proved to be a better option here since it shows much improvement.
+
+## Problem 3 - Large data
+
+Generate artificial data by running the code in this script. Do not include this script in your submitted PDF; either use source() or save/load to get the data into R.
+
+a. Fit one model per country. Fit a mixed effects logistic regression model, predicting course completion based upon prior GPA, number of forum posts, number of quiz attempts, and a random effect for device type. Standardize the predictors within each country. Generate some sort of visualization of the estimated coefficients for number of forum posts in each country.
+
+Report the running time (from system.time) for each of the 6 models.
+
+```{r}
+library(dplyr)
+library(lme4)
+library(ggplot2)
+source("ps06q3.R")  
+
+countries <- levels(df$country)
+
+#' Fit a logistic regression model
+#' @param ctry A country name
+#' @return A list
+fit_one_country_glm <- function(ctry) {
+  dat <- df %>%
+    filter(country == ctry) %>%
+    mutate(
+      prior_gpa_z     = as.numeric(scale(prior_gpa)),
+      forum_posts_z   = as.numeric(scale(forum_posts)),
+      quiz_attempts_z = as.numeric(scale(quiz_attempts))
+    )
+
+  tm <- system.time(
+    fit <- glm(
+      completed_course ~ prior_gpa_z + forum_posts_z + quiz_attempts_z +
+        device_type,
+      data   = dat,
+      family = binomial()
+    )
+  )
+
+  list(country = ctry, fit = fit, time = tm)
+}
+
+glm_results <- lapply(countries, fit_one_country_glm)
+```
+
+
+```{r}
+# coefficients 
+coefs <- do.call(rbind, lapply(glm_results, function(res) {
+  cm <- coef(summary(res$fit))
+  beta <- cm["forum_posts_z", "Estimate"]
+  se   <- cm["forum_posts_z", "Std. Error"]
+  data.frame(
+    country = res$country,
+    beta  = beta,
+    lower = beta - 1.96 * se,
+    upper = beta + 1.96 * se
+  )
+}))
+coefs 
+
+```
+
+
+```{R}
+# Visualization 
+ggplot(coefs, aes(x = country, y = beta)) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), col = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    x = "Country",
+    y = "Effect of standardized forum posts",
+    title = "coefficient by country"
+  ) +
+  theme_minimal()
+```
+
+
+```{R}
+# Running times for the 6 models
+runtime <- do.call(rbind, lapply(glm_results, function(res) {
+  data.frame(
+    country = res$country,
+    user = res$time["user.self"],
+    system  = res$time["sys.self"],
+    elapsed = res$time["elapsed"]
+  )
+}))
+runtime
+```
+
+Above is the runtime table of 6 models.
+
+
+b. Devise an approach that minimizes the running time of your script. Report the running time of your entire script (running models and estimating coefficients; no need for a new plot). Do not use a different package for the models. Show that the results match those from part a).
+
+I'll standardize the predictors once for the data set, and then I'll split by country and fitting models.
+
+```{R}
+script_time <- system.time({
+
+  # Standardize predictors first
+  df_std <- df %>%
+    group_by(country) %>%
+    mutate(
+      prior_gpa_z = as.numeric(scale(prior_gpa)),
+      forum_posts_z  = as.numeric(scale(forum_posts)),
+      quiz_attempts_z = as.numeric(scale(quiz_attempts))
+    ) %>%
+    ungroup()
+
+  # Split data 
+  country_split <- split(df_std, df_std$country)
+
+  #' Fit a logistic GLM for a single country 
+  #' @param dat A data frame for one country 
+  #' @return list
+  fit_country <- function(dat) {
+    tm <- system.time(
+      fit <- glm(
+        completed_course ~ prior_gpa_z + forum_posts_z + quiz_attempts_z +
+          device_type,
+        data   = dat,
+        family = binomial()
+      )
+    )
+    list(country = as.character(dat$country[1]), fit = fit, time = tm)
+  }
+
+  # Fit models now
+  fast_results <- lapply(country_split, fit_country)
+
+  # Running times for the 6 models
+  fast_timing <<- do.call(
+    rbind,
+    lapply(fast_results, function(res) {
+      data.frame(
+        country = res$country,
+        user    = as.numeric(res$time["user.self"]),
+        system  = as.numeric(res$time["sys.self"]),
+        elapsed = as.numeric(res$time["elapsed"])
+      )
+    })
+  )
+
+  # Extract coefficient
+  fast_coef_tbl <<- do.call(
+    rbind,
+    lapply(fast_results, function(res) {
+      cm <- coef(summary(res$fit))
+      beta <- cm["forum_posts_z", "Estimate"]
+      se   <- cm["forum_posts_z", "Std. Error"]
+      data.frame(
+        country = res$country,
+        beta  = beta,
+        lower = beta - 1.96 * se,
+        upper  = beta + 1.96 * se
+      )
+    })
+  )
+})
+
+# total running time 
+script_time
+```
+
+
+The running time about my entire script is about 13 seconds.
+
+```{r}
+# Check that results match part (a)
+comparison <- merge(
+  coefs,
+  fast_coef_tbl,
+  by = "country",
+  suffixes = c("_a", "_b")
+)
+comparison
+
+max(abs(comparison$beta_a  - comparison$beta_b))
+max(abs(comparison$lower_a - comparison$lower_b))
+max(abs(comparison$upper_a - comparison$upper_b))
+```
+
+This matches results from (a).
+
+## Problem 4 - data.table
+
+Use the data.table for this problem. 
+Use the “ATP Matches” data from 2019 available at https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv. This data tracks all Tennis matches. This data does not have documentation, so you’ll have to explore the data yourself to figure out it’s structure. Use it to answer the following questions. Your answers should show both the output from R that allows you to answer it, as well as a written answer.
+
+```{r}
+matches <- read.csv("https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv")
+head(matches)
+```
+
+```{r}
+library(data.table)
+# convert to data.table
+setDT(matches)
+```
+
+a. How many tournaments took place in 2019?
+
+```{r}
+tourneys <- unique(matches[, .(tourney_id, tourney_name)])
+
+n_tourneys_raw <- uniqueN(tourneys$tourney_id)
+n_tourneys_raw   
+```
+
+```{r}
+library(stringr)
+# Davis Cup 
+tourneys[str_detect(tourney_name, "Davis Cup")][1:5]
+
+# all those different Davis Cup finals are really one event
+tourneys[
+  , tourney_name_clean := str_replace(tourney_name, "Davis.*", "Davis Cup")
+]
+
+# now count tournaments
+n_tourneys_clean <- uniqueN(tourneys$tourney_name_clean)
+n_tourneys_clean  
+```
+
+Hence, 69 tournaments took place in 2019.
+
+
+b. Did any player win more than one tournament? If so, how many players won more than one tournament, and how many tournaments did the most winning player(s) win?
+
+```{r}
+finals_dt <- matches[
+  order(tourney_name, -match_num)  
+][
+  , .SD[1], by = tourney_name      # keep one row
+]
+
+# tournaments each player won
+winners_dt <- finals_dt[
+  , .(wins = .N), by = winner_name
+][
+  order(-wins)
+][
+  wins > 1
+]
+winners_dt
+n_multi <- nrow(winners_dt)
+n_multi   # players who won more than one tournaments
+
+# top 2
+winners_dt[1:2]
+```
+
+Hence, 17 players won more than one tournament and the most winning player won 9.
+
+
+c. Is there any evidence that winners have more aces than losers? 
+
+```{r}
+matches[, win_more_aces := w_ace > l_ace]
+
+# summarize the proportion
+ace_summ <- matches[!is.na(win_more_aces),
+                    .(
+                      p_hat = mean(win_more_aces),
+                      n     = .N
+                    )]
+ace_summ
+
+# z-test for H0: p = 0.5
+p0  <- 0.5
+se  <- sqrt(p0 * (1 - p0) / ace_summ$n)
+z   <- (ace_summ$p_hat - p0) / se
+pval <- 2 * (1 - pnorm(abs(z)))  # two-sided
+
+data.table(
+  p_hat = ace_summ$p_hat,
+  z_stat = z,
+  p_value = pval,
+  n = ace_summ$n
+)
+```
+Since the p value is pretty small, we do have statistical significant evidence that winners perform more aces than losers.
+
+
+d. Identify the player(s) with the highest win-rate. (Note that this is NOT asking for the highest number of wins.) Restrict to players with at least 5 matches.
+
+```{r}
+# winner rows
+wins <- matches[, .(player = winner_name, win = 1L)]
+# loser rows
+losses <- matches[, .(player = loser_name, win = 0L)]
+long_form <- rbindlist(list(wins, losses))
+
+# win rates
+win_rates <- long_form[
+  , .(
+    matches = .N,
+    wins    = sum(win),
+    win_rate = mean(win)
+  ),
+  by = player
+]
+
+# people who played at least 5 matches
+win_rates_5 <- win_rates[matches >= 5]
+
+# best win rate
+best_rate <- max(win_rates_5$win_rate)
+best_rate
+
+best_players <- win_rates_5[win_rate == best_rate][order(player)]
+best_players
+```
+
+
+The player with the highest win-rate is Rafael Nadal, who has a win rate of 0.869.
+
